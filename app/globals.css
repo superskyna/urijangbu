@@ -1,0 +1,25 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../vendor/shadcn-tailwind-4.13.0.css";
+
+:root {
+  --background:#f4f7f9;--foreground:#14213a;--card:#fff;--card-foreground:#14213a;
+  --popover:#fff;--popover-foreground:#14213a;--primary:#173f69;--primary-foreground:#fff;
+  --secondary:#eaf1f4;--secondary-foreground:#173f69;--muted:#edf2f4;--muted-foreground:#687985;
+  --accent:#e4f7f1;--accent-foreground:#145d4d;--destructive:#d94b58;--border:#dfe7ea;
+  --input:#cad7dc;--ring:#27aa89;--chart-1:#1fc7a1;--chart-2:#4b79ff;--chart-3:#ffb34b;
+  --chart-4:#ff6e78;--chart-5:#788ba0;--radius:.8rem;--sidebar:#10233d;--sidebar-foreground:#fff;
+  --sidebar-primary:#2bd8ac;--sidebar-primary-foreground:#08231d;--sidebar-accent:#ffffff12;
+  --sidebar-accent-foreground:#fff;--sidebar-border:#ffffff1a;--sidebar-ring:#2bd8ac;
+}
+@theme inline {
+  --color-background:var(--background);--color-foreground:var(--foreground);--color-card:var(--card);--color-card-foreground:var(--card-foreground);
+  --color-popover:var(--popover);--color-popover-foreground:var(--popover-foreground);--color-primary:var(--primary);--color-primary-foreground:var(--primary-foreground);
+  --color-secondary:var(--secondary);--color-secondary-foreground:var(--secondary-foreground);--color-muted:var(--muted);--color-muted-foreground:var(--muted-foreground);
+  --color-accent:var(--accent);--color-accent-foreground:var(--accent-foreground);--color-destructive:var(--destructive);--color-border:var(--border);
+  --color-input:var(--input);--color-ring:var(--ring);--color-chart-1:var(--chart-1);--color-chart-2:var(--chart-2);--color-chart-3:var(--chart-3);
+  --color-chart-4:var(--chart-4);--color-chart-5:var(--chart-5);--radius-sm:calc(var(--radius) - 4px);--radius-md:calc(var(--radius) - 2px);
+  --radius-lg:var(--radius);--radius-xl:calc(var(--radius) + 4px);--font-sans:Arial,"Noto Sans KR",sans-serif;
+}
+*{border-color:var(--border)}body{margin:0;background:var(--background);color:var(--foreground);font-family:Arial,"Noto Sans KR",sans-serif}button{cursor:pointer}
+@media(prefers-reduced-motion:reduce){*,::before,::after{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
