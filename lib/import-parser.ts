@@ -1,3 +1,5 @@
+import { inferTransactionCategory, isTransactionCategory } from "@/lib/category-master";
+
 export type ImportedTransaction = {
   owner?: string;
   date: string;
@@ -14,28 +16,18 @@ const number = (value: unknown) => Number(text(value).replace(/[^0-9.-]/g, "")) 
 const dateLabel = (value: unknown) => {
   const raw = text(value);
   const yearFirst = raw.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
-  if (yearFirst) return `${yearFirst[2].padStart(2, "0")}.${yearFirst[3].padStart(2, "0")}`;
+  if (yearFirst) return `${yearFirst[1]}-${yearFirst[2].padStart(2, "0")}-${yearFirst[3].padStart(2, "0")}`;
   const monthFirst = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
-  if (monthFirst) return `${monthFirst[1].padStart(2, "0")}.${monthFirst[2].padStart(2, "0")}`;
+  if (monthFirst) {
+    const year = monthFirst[3].length === 2 ? `20${monthFirst[3]}` : monthFirst[3];
+    return `${year}-${monthFirst[1].padStart(2, "0")}-${monthFirst[2].padStart(2, "0")}`;
+  }
   const short = raw.match(/^(\d{1,2})[./-](\d{1,2})$/);
-  return short ? `${short[1].padStart(2, "0")}.${short[2].padStart(2, "0")}` : "";
+  return short ? `${new Date().getFullYear()}-${short[1].padStart(2, "0")}-${short[2].padStart(2, "0")}` : "";
 };
 
 export function inferCategory(merchant: string) {
-  const normalized = merchant.replace(/\s+/g, "").toLowerCase();
-  if (/올리브영/.test(normalized)) return "쇼핑";
-  if (/이마트|홈플러스|롯데마트|코스트코|하나로마트|대형마트/.test(normalized)) return "식비";
-  if (/병원|의원|약국|한의원|안과|치과/.test(normalized)) return "의료비";
-  if (/철도|코레일|티머니|카카오t|택시|하이패스|교통/.test(normalized)) return "교통비";
-  if (/주유|오일뱅크|칼텍스|s-oil|에쓰오일/.test(normalized)) return "주유";
-  if (/카센타|카센터|정비|세차|자동차용품/.test(normalized)) return "차량관리";
-  if (/헬스|필라테스|수영|요가|pt/.test(normalized)) return "운동";
-  if (/보험/.test(normalized)) return "보험";
-  if (/통신|넷플릭스|유튜브|멜론|구독/.test(normalized)) return "통신·구독";
-  if (/계비|친목회|동창회|모임회비/.test(normalized)) return "계모임";
-  if (/마트|카페|커피|식당|푸드|토스트|배달|쿠팡이츠|배민/.test(normalized)) return "식비";
-  if (/다이소|생활용품/.test(normalized)) return "생활용품";
-  return "기타·미분류";
+  return inferTransactionCategory(merchant);
 }
 
 function parseCard(rows: unknown[][]): ImportedTransaction[] {
@@ -100,11 +92,12 @@ function parseUribook(rows: unknown[][]): ImportedTransaction[] {
     const kind = text(row[kindCol]);
     const rawDate = text(row[dateCol]);
     const date = dateLabel(rawDate.replace(/\//g, "-"));
-    const category = text(row[categoryCol]) || inferCategory(merchant);
+    const enteredCategory = text(row[categoryCol]);
+    const category = isTransactionCategory(enteredCategory) ? enteredCategory : inferCategory(merchant);
     const account = text(row[accountCol]) || "직접 입력";
     const owner = text(row[ownerCol]);
     const amount = /수입|입금/.test(kind) ? Math.abs(amountValue) : /지출|출금/.test(kind) ? -Math.abs(amountValue) : amountValue;
-    return [{ owner, date, merchant, category, account, amount, review: !date || !owner, sourceKey: `uribook:${index}:${rawDate}:${merchant}:${amount}` }];
+    return [{ owner, date, merchant, category, account, amount, review: !date || !owner || (!!enteredCategory && !isTransactionCategory(enteredCategory)), sourceKey: `uribook:${index}:${rawDate}:${merchant}:${amount}` }];
   });
 }
 
