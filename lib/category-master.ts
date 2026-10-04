@@ -24,6 +24,7 @@ export type TransactionCategory = (typeof transactionCategories)[number];
 
 export const merchantCategoryRules: { keyword: string; category: TransactionCategory }[] = [
   { keyword: "올리브영", category: "쇼핑" },
+  { keyword: "쿠팡", category: "쇼핑" },
   { keyword: "이마트", category: "식비" },
   { keyword: "홈플러스", category: "식비" },
   { keyword: "롯데마트", category: "식비" },
@@ -63,21 +64,32 @@ export const merchantCategoryRules: { keyword: string; category: TransactionCate
   { keyword: "동창회", category: "계모임" },
   { keyword: "모임회비", category: "계모임" },
   { keyword: "다이소", category: "생활용품" },
+  { keyword: "무인양품", category: "생활용품" },
   { keyword: "생활용품", category: "생활용품" },
+  { keyword: "정육점", category: "식비" },
+  { keyword: "호랑마켓", category: "식비" },
+  { keyword: "투썸플레이스", category: "식비" },
+  { keyword: "스타벅스", category: "식비" },
+  { keyword: "이삭토스트", category: "식비" },
   { keyword: "카페", category: "식비" },
   { keyword: "커피", category: "식비" },
   { keyword: "식당", category: "식비" },
   { keyword: "배달", category: "식비" },
   { keyword: "쿠팡이츠", category: "식비" },
   { keyword: "배민", category: "식비" },
+  { keyword: "여기어때", category: "여행·여가" },
+  { keyword: "안과", category: "의료비" },
+  { keyword: "카센타", category: "차량관리" },
+  { keyword: "5.18 꽃마트", category: "경조사·선물" },
 ];
 
 export function inferTransactionCategory(merchant: string): TransactionCategory {
   const normalized = merchant.replace(/\s+/g, "").toLocaleLowerCase("ko");
-  const rule = merchantCategoryRules.find(({ keyword }) =>
-    normalized.includes(keyword.replace(/\s+/g, "").toLocaleLowerCase("ko")),
-  );
-  return rule?.category ?? "기타·미분류";
+  for (let index = merchantCategoryRules.length - 1; index >= 0; index -= 1) {
+    const rule = merchantCategoryRules[index];
+    if (normalized.includes(rule.keyword.replace(/\s+/g, "").toLocaleLowerCase("ko"))) return rule.category;
+  }
+  return "기타·미분류";
 }
 
 export function isTransactionCategory(value: string): value is TransactionCategory {
