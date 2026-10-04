@@ -1,4 +1,5 @@
 export type ImportedTransaction = {
+  owner?: string;
   date: string;
   merchant: string;
   category: string;
@@ -11,8 +12,13 @@ export type ImportedTransaction = {
 const text = (value: unknown) => String(value ?? "").trim();
 const number = (value: unknown) => Number(text(value).replace(/[^0-9.-]/g, "")) || 0;
 const dateLabel = (value: unknown) => {
-  const matched = text(value).match(/(\d{4})[.-](\d{1,2})[.-](\d{1,2})/);
-  return matched ? `${matched[2].padStart(2, "0")}.${matched[3].padStart(2, "0")}` : text(value).slice(0, 5);
+  const raw = text(value);
+  const yearFirst = raw.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+  if (yearFirst) return `${yearFirst[2].padStart(2, "0")}.${yearFirst[3].padStart(2, "0")}`;
+  const monthFirst = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  if (monthFirst) return `${monthFirst[1].padStart(2, "0")}.${monthFirst[2].padStart(2, "0")}`;
+  const short = raw.match(/^(\d{1,2})[./-](\d{1,2})$/);
+  return short ? `${short[1].padStart(2, "0")}.${short[2].padStart(2, "0")}` : "";
 };
 
 export function inferCategory(merchant: string) {
@@ -39,7 +45,7 @@ function parseCard(rows: unknown[][]): ImportedTransaction[] {
   const at = (name: string) => cols.indexOf(name);
   return rows.slice(header + 1).flatMap((row) => {
     const usedAt = text(row[at("이용일")]);
-    if (!/^\d{4}[.-]\d{1,2}[.-]\d{1,2}/.test(usedAt)) return [];
+    if (!dateLabel(usedAt)) return [];
     const status = text(row[at("상태")]);
     const acquired = text(row[at("매입")]);
     if (status.includes("취소")) return [];
@@ -61,7 +67,7 @@ function parseBank(rows: unknown[][]): ImportedTransaction[] {
   const at = (name: string) => cols.indexOf(name);
   return rows.slice(header + 1).flatMap((row) => {
     const usedAt = text(row[at("거래일시")]);
-    if (!/^\d{4}[.-]\d{1,2}[.-]\d{1,2}/.test(usedAt)) return [];
+    if (!dateLabel(usedAt)) return [];
     const out = number(row[at("출금")]);
     const incoming = number(row[at("입금")]);
     const merchant = text(row[at("거래내용")]) || text(row[at("상대계좌예금주명")]) || "거래처 미확인";
@@ -75,13 +81,42 @@ function parseBank(rows: unknown[][]): ImportedTransaction[] {
   });
 }
 
+function parseUribook(rows: unknown[][]): ImportedTransaction[] {
+  const header = rows.findIndex((row) => row.some((cell) => text(cell) === "거래일") && row.some((cell) => text(cell) === "작성자") && row.some((cell) => /거래처/.test(text(cell))));
+  if (header < 0) return [];
+  const cols = rows[header].map(text);
+  const at = (...names: string[]) => cols.findIndex((column) => names.includes(column));
+  const dateCol = at("거래일", "날짜");
+  const ownerCol = at("작성자");
+  const merchantCol = at("거래처·내용", "거래처", "내용");
+  const categoryCol = at("분류", "카테고리");
+  const accountCol = at("계좌·카드", "계좌/카드", "계좌", "카드");
+  const kindCol = at("구분", "수입/지출");
+  const amountCol = at("금액", "금액(원)");
+  return rows.slice(header + 1).flatMap((row, index) => {
+    const merchant = text(row[merchantCol]);
+    const amountValue = number(row[amountCol]);
+    if (!merchant || !amountValue) return [];
+    const kind = text(row[kindCol]);
+    const rawDate = text(row[dateCol]);
+    const date = dateLabel(rawDate.replace(/\//g, "-"));
+    const category = text(row[categoryCol]) || inferCategory(merchant);
+    const account = text(row[accountCol]) || "직접 입력";
+    const owner = text(row[ownerCol]);
+    const amount = /수입|입금/.test(kind) ? Math.abs(amountValue) : /지출|출금/.test(kind) ? -Math.abs(amountValue) : amountValue;
+    return [{ owner, date, merchant, category, account, amount, review: !date || !owner, sourceKey: `uribook:${index}:${rawDate}:${merchant}:${amount}` }];
+  });
+}
+
 export async function parseFinanceFile(file: File) {
   const XLSX = await import("xlsx");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" }) as unknown[][];
-  const joined = rows.slice(0, 8).flat().map(text).join(" ");
-  const institution = /이용일.*승인번호|카드이용내역/.test(joined) ? "하나카드" : /거래일시.*거래후 잔액|IBK|입출식/.test(joined) ? "IBK기업은행" : "알 수 없는 기관";
-  const transactions = institution === "하나카드" ? parseCard(rows) : institution === "IBK기업은행" ? parseBank(rows) : [];
-  return { institution, transactions, needsReview: transactions.filter((item) => item.review).length };
+  const sheets = workbook.SheetNames.map((name) => XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: false, defval: "" }) as unknown[][]);
+  const templateRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "거래일") && row.some((cell) => text(cell) === "작성자") && row.some((cell) => /거래처/.test(text(cell)))));
+  const cardRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "이용일") && row.some((cell) => text(cell) === "승인번호")));
+  const bankRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "거래일시") && row.some((cell) => text(cell) === "거래후 잔액")));
+  const institution = templateRows ? "우리장부 거래양식" : cardRows ? "하나카드" : bankRows ? "IBK기업은행" : "알 수 없는 기관";
+  const rows = templateRows ?? cardRows ?? bankRows ?? sheets[0] ?? [];
+  const transactions = institution === "우리장부 거래양식" ? parseUribook(rows) : institution === "하나카드" ? parseCard(rows) : institution === "IBK기업은행" ? parseBank(rows) : [];
+  return { institution, transactions, replaceExisting: institution === "우리장부 거래양식", needsReview: transactions.filter((item) => item.review).length };
 }
