@@ -14,6 +14,13 @@ export type ImportedTransaction = {
 const text = (value: unknown) => String(value ?? "").trim();
 const number = (value: unknown) => Number(text(value).replace(/[^0-9.-]/g, "")) || 0;
 const dateLabel = (value: unknown) => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86_400_000);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
   const raw = text(value);
   const yearFirst = raw.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
   if (yearFirst) return `${yearFirst[1]}-${yearFirst[2].padStart(2, "0")}-${yearFirst[3].padStart(2, "0")}`;
@@ -36,8 +43,9 @@ function parseCard(rows: unknown[][]): ImportedTransaction[] {
   const cols = rows[header].map(text);
   const at = (name: string) => cols.indexOf(name);
   return rows.slice(header + 1).flatMap((row) => {
-    const usedAt = text(row[at("이용일")]);
-    if (!dateLabel(usedAt)) return [];
+    const usedAtValue = row[at("이용일")];
+    const usedAt = text(usedAtValue);
+    if (!dateLabel(usedAtValue)) return [];
     const status = text(row[at("상태")]);
     const acquired = text(row[at("매입")]);
     if (status.includes("취소")) return [];
@@ -48,7 +56,7 @@ function parseCard(rows: unknown[][]): ImportedTransaction[] {
     if (!amount) return [];
     const approval = text(row[at("승인번호")]);
     const card = text(row[at("이용카드")]);
-    return [{ date: dateLabel(usedAt), merchant, category: inferCategory(merchant), account: card || "하나카드", amount: -amount, review: acquired !== "매입", sourceKey: `hana:${card}:${approval}:${usedAt}:${approved}` }];
+    return [{ date: dateLabel(usedAtValue), merchant, category: inferCategory(merchant), account: card || "하나카드", amount: -amount, review: acquired !== "매입", sourceKey: `hana:${card}:${approval}:${usedAt}:${approved}` }];
   });
 }
 
@@ -58,8 +66,9 @@ function parseBank(rows: unknown[][]): ImportedTransaction[] {
   const cols = rows[header].map(text);
   const at = (name: string) => cols.indexOf(name);
   return rows.slice(header + 1).flatMap((row) => {
-    const usedAt = text(row[at("거래일시")]);
-    if (!dateLabel(usedAt)) return [];
+    const usedAtValue = row[at("거래일시")];
+    const usedAt = text(usedAtValue);
+    if (!dateLabel(usedAtValue)) return [];
     const out = number(row[at("출금")]);
     const incoming = number(row[at("입금")]);
     const merchant = text(row[at("거래내용")]) || text(row[at("상대계좌예금주명")]) || "거래처 미확인";
@@ -69,7 +78,7 @@ function parseBank(rows: unknown[][]): ImportedTransaction[] {
     const isTransfer = /이체|인터넷/.test(kind);
     const amount = out ? -out : incoming;
     if (!amount) return [];
-    return [{ date: dateLabel(usedAt), merchant, category: isRefund ? inferCategory(merchant) : incoming ? "기타·미분류" : inferCategory(merchant), account: "IBK기업은행", amount, review: isTransfer || (!incoming && inferCategory(merchant) === "기타·미분류"), sourceKey: `ibk:${usedAt}:${out}:${incoming}:${merchant}` }];
+    return [{ date: dateLabel(usedAtValue), merchant, category: isRefund ? inferCategory(merchant) : incoming ? "기타·미분류" : inferCategory(merchant), account: "IBK기업은행", amount, review: isTransfer || (!incoming && inferCategory(merchant) === "기타·미분류"), sourceKey: `ibk:${usedAt}:${out}:${incoming}:${merchant}` }];
   });
 }
 
@@ -90,8 +99,9 @@ function parseUribook(rows: unknown[][]): ImportedTransaction[] {
     const amountValue = number(row[amountCol]);
     if (!merchant || !amountValue) return [];
     const kind = text(row[kindCol]);
-    const rawDate = text(row[dateCol]);
-    const date = dateLabel(rawDate.replace(/\//g, "-"));
+    const rawDateValue = row[dateCol];
+    const rawDate = text(rawDateValue);
+    const date = dateLabel(rawDateValue);
     const enteredCategory = text(row[categoryCol]);
     const category = isTransactionCategory(enteredCategory) ? enteredCategory : inferCategory(merchant);
     const account = text(row[accountCol]) || "직접 입력";
@@ -103,8 +113,8 @@ function parseUribook(rows: unknown[][]): ImportedTransaction[] {
 
 export async function parseFinanceFile(file: File) {
   const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-  const sheets = workbook.SheetNames.map((name) => XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: false, defval: "" }) as unknown[][]);
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+  const sheets = workbook.SheetNames.map((name) => XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: true, defval: "" }) as unknown[][]);
   const templateRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "거래일") && row.some((cell) => text(cell) === "작성자") && row.some((cell) => /거래처/.test(text(cell)))));
   const cardRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "이용일") && row.some((cell) => text(cell) === "승인번호")));
   const bankRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "거래일시") && row.some((cell) => text(cell) === "거래후 잔액")));
