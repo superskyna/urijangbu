@@ -1,4 +1,4 @@
-export type ImportedSaving = { owner:string; name:string; institution:string; balance:number; currency:string; date:string; note:string };
+export type ImportedSaving = { owner:string; name:string; institution:string; balance:number; rate:number; currency:string; date:string; note:string };
 export type ImportedInvestment = { owner:string; name:string; ticker:string; market:string; currency:string; quantity:number; averagePrice:number; currentPrice:number; invested:number; date:string; note:string };
 export type ImportedLoan = { owner:string; name:string; institution:string; principal:number; rate:number; monthlyPayment:number; date:string; note:string };
 export type ImportedAssets = { savings:ImportedSaving[]; investments:ImportedInvestment[]; loans:ImportedLoan[]; total:number };
@@ -28,7 +28,7 @@ export async function parseAssetFile(file:File):Promise<ImportedAssets> {
     const name=clean(row["자산명"]), institution=clean(row["금융기관"]), balance=amount(row["현재잔액"]);
     if (!name && !institution && !balance) return [];
     if (!name || !institution || !balance) return [];
-    return [{ owner:clean(row["작성자"]), name, institution, balance, currency:clean(row["통화"]).toUpperCase()||"KRW", date:dateText(row["기준일"]), note:clean(row["메모"]) }];
+    return [{ owner:clean(row["작성자"]), name, institution, balance, rate:amount(row["연이율(%)"]), currency:clean(row["통화"]).toUpperCase()||"KRW", date:dateText(row["기준일"]), note:clean(row["메모"]) }];
   });
   const investments = rows("주식·ETF").flatMap((row):ImportedInvestment[] => {
     const name=clean(row["종목명"]), ticker=clean(row["티커"]), quantity=amount(row["보유수량"]), averagePrice=amount(row["평균매입가"]);
