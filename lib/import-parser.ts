@@ -11,9 +11,29 @@ export type ImportedTransaction = {
   sourceKey: string;
 };
 
+export type ManualColumnMapping = {
+  sheetIndex: number;
+  headerRow: number;
+  dateCol: number;
+  merchantCol: number;
+  amountCol: number;
+  statusCol?: number;
+  accountCol?: number;
+};
+
+export type ManualImportSuggestion = {
+  sheetName: string;
+  signature: string;
+  columns: { index: number; label: string }[];
+  mapping: ManualColumnMapping;
+};
+
 const text = (value: unknown) => String(value ?? "").trim();
 const number = (value: unknown) => Number(text(value).replace(/[^0-9.-]/g, "")) || 0;
-const headerText = (value: unknown) => text(value).replace(/[\s\r\n]+/g, "");
+const headerText = (value: unknown) => text(value)
+  .replace(/[（(][^）)]*[）)]/g, "")
+  .replace(/[\s\r\n]+/g, "")
+  .toLowerCase();
 const CARD_HEADERS = {
   date: ["이용일", "이용일자", "승인일", "승인일자", "사용일", "사용일자", "매출일", "매출일자"],
   merchant: ["가맹점명", "이용가맹점", "이용가맹점명", "가맹점", "이용처", "사용처"],
@@ -35,6 +55,53 @@ const cardHeaderIndex = (rows: unknown[][]) => rows.findIndex((row) => {
     && columnIndex(columns, CARD_HEADERS.merchant) >= 0
     && columnIndex(columns, CARD_HEADERS.amount) >= 0;
 });
+
+type WorkbookSheet = { name: string; rows: unknown[][] };
+
+async function readWorkbook(file: File): Promise<WorkbookSheet[]> {
+  const XLSX = await import("xlsx");
+  // Keep Excel dates as serial numbers. Converting them to Date objects here can
+  // shift a midnight cell to the previous day depending on the local timezone.
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+  return workbook.SheetNames.map((name) => ({
+    name,
+    rows: XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: true, defval: "" }) as unknown[][],
+  }));
+}
+
+const likelyColumn = (columns: string[], pattern: RegExp) => columns.findIndex((column) => pattern.test(headerText(column)));
+
+function suggestManualMapping(sheets: WorkbookSheet[]): ManualImportSuggestion | undefined {
+  const candidates = sheets.flatMap((sheet, sheetIndex) => sheet.rows.slice(0, 50).map((row, headerRow) => {
+    const columns = row.map(text);
+    const filled = columns.filter(Boolean);
+    const keywordScore = filled.filter((column) => /(일자|날짜|date|가맹|이용처|사용처|거래처|상호|merchant|금액|amount|결제액|사용액|취소|상태|카드|계좌)/i.test(headerText(column))).length;
+    const valueLike = filled.filter((column) => Boolean(dateLabel(column)) || /^[-+]?\d[\d,.]*$/.test(column)).length;
+    return { sheet, sheetIndex, headerRow, columns, score: keywordScore * 4 + filled.length - valueLike * 2 };
+  })).filter((candidate) => candidate.columns.filter(Boolean).length >= 3).sort((a, b) => b.score - a.score);
+  const candidate = candidates[0];
+  if (!candidate) return undefined;
+  const columns = candidate.columns.map((label, index) => ({ index, label: label || `열 ${index + 1}` }));
+  const dateCol = likelyColumn(candidate.columns, /(일자|날짜|date)/i);
+  const merchantCol = likelyColumn(candidate.columns, /(가맹|이용처|사용처|거래처|상호|merchant)/i);
+  const amountCol = likelyColumn(candidate.columns, /(금액|amount|결제액|사용액|지출액)/i);
+  const statusCol = likelyColumn(candidate.columns, /(취소|상태|status)/i);
+  const accountCol = likelyColumn(candidate.columns, /(카드번호|카드명|이용카드|계좌|account)/i);
+  return {
+    sheetName: candidate.sheet.name,
+    signature: candidate.columns.map(headerText).join("|"),
+    columns,
+    mapping: {
+      sheetIndex: candidate.sheetIndex,
+      headerRow: candidate.headerRow,
+      dateCol,
+      merchantCol,
+      amountCol,
+      ...(statusCol >= 0 ? { statusCol } : {}),
+      ...(accountCol >= 0 ? { accountCol } : {}),
+    },
+  };
+}
 const dateLabel = (value: unknown) => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -140,18 +207,53 @@ function parseUribook(rows: unknown[][]): ImportedTransaction[] {
 }
 
 export async function parseFinanceFile(file: File) {
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-  const sheets = workbook.SheetNames.map((name) => XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: true, defval: "" }) as unknown[][]);
-  const templateRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "거래일") && row.some((cell) => text(cell) === "작성자") && row.some((cell) => /거래처/.test(text(cell)))));
-  const cardRows = sheets.find((rows) => cardHeaderIndex(rows) >= 0);
-  const bankRows = sheets.find((rows) => rows.some((row) => row.some((cell) => text(cell) === "거래일시") && row.some((cell) => text(cell) === "거래후 잔액")));
+  const sheets = await readWorkbook(file);
+  const templateSheet = sheets.find(({ rows }) => rows.some((row) => row.some((cell) => text(cell) === "거래일") && row.some((cell) => text(cell) === "작성자") && row.some((cell) => /거래처/.test(text(cell)))));
+  const cardSheet = sheets.find(({ rows }) => cardHeaderIndex(rows) >= 0);
+  const bankSheet = sheets.find(({ rows }) => rows.some((row) => row.some((cell) => text(cell) === "거래일시") && row.some((cell) => text(cell) === "거래후 잔액")));
   const fileLabel = headerText(file.name);
   const cardInstitution = /농협|NH|일시불\+?할부_?카드이용내역조회/i.test(fileLabel)
     ? "NH농협카드"
     : /하나/i.test(fileLabel) ? "하나카드" : "카드 이용내역";
-  const institution = templateRows ? "우리장부 거래양식" : cardRows ? cardInstitution : bankRows ? "IBK기업은행" : "알 수 없는 기관";
-  const rows = templateRows ?? cardRows ?? bankRows ?? sheets[0] ?? [];
-  const transactions = institution === "우리장부 거래양식" ? parseUribook(rows) : cardRows ? parseCard(rows, institution) : institution === "IBK기업은행" ? parseBank(rows) : [];
-  return { institution, transactions, replaceExisting: institution === "우리장부 거래양식", needsReview: transactions.filter((item) => item.review).length };
+  const institution = templateSheet ? "우리장부 거래양식" : cardSheet ? cardInstitution : bankSheet ? "IBK기업은행" : "알 수 없는 기관";
+  const rows = (templateSheet ?? cardSheet ?? bankSheet)?.rows ?? [];
+  const transactions = institution === "우리장부 거래양식" ? parseUribook(rows) : cardSheet ? parseCard(rows, institution) : institution === "IBK기업은행" ? parseBank(rows) : [];
+  return {
+    institution,
+    transactions,
+    replaceExisting: institution === "우리장부 거래양식",
+    needsReview: transactions.filter((item) => item.review).length,
+    manualSuggestion: transactions.length ? undefined : suggestManualMapping(sheets),
+  };
+}
+
+export async function parseFinanceFileWithMapping(file: File, mapping: ManualColumnMapping) {
+  const sheets = await readWorkbook(file);
+  const sheet = sheets[mapping.sheetIndex];
+  if (!sheet) throw new Error("선택한 시트를 찾지 못했습니다.");
+  if ([mapping.dateCol, mapping.merchantCol, mapping.amountCol].some((column) => column < 0)) {
+    throw new Error("날짜, 거래처, 금액 열을 모두 선택해주세요.");
+  }
+  if (new Set([mapping.dateCol, mapping.merchantCol, mapping.amountCol]).size !== 3) {
+    throw new Error("날짜, 거래처, 금액은 서로 다른 열을 선택해주세요.");
+  }
+  const transactions = sheet.rows.slice(mapping.headerRow + 1).flatMap((row, index) => {
+    const dateValue = row[mapping.dateCol];
+    const date = dateLabel(dateValue);
+    const merchant = text(row[mapping.merchantCol]);
+    const amount = number(row[mapping.amountCol]);
+    const status = mapping.statusCol === undefined ? "" : text(row[mapping.statusCol]);
+    if (!date || !merchant || amount <= 0 || /취소|cancel|void/i.test(status)) return [];
+    const account = mapping.accountCol === undefined ? "수동 매핑 카드" : text(row[mapping.accountCol]) || "수동 매핑 카드";
+    return [{
+      date,
+      merchant,
+      category: inferCategory(merchant),
+      account,
+      amount: -Math.abs(amount),
+      review: false,
+      sourceKey: `manual:${mapping.sheetIndex}:${mapping.headerRow}:${index}:${text(dateValue)}:${merchant}:${amount}`,
+    }];
+  });
+  return { institution: "수동 열 매핑", transactions, replaceExisting: false, needsReview: 0 };
 }
