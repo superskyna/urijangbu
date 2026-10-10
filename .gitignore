@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -38,6 +39,8 @@ yarn-error.log*
 # typescript
 next-env.d.ts
 /dist/
+/.firebase/
+*.tsbuildinfo
 /.wrangler/
 # Checkout-local execution profile and tool state; never publish them.
 /.sites-runtime/

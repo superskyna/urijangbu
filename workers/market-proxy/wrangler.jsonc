@@ -1,0 +1,8 @@
+{
+  "name": "urijangbu-market-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-09",
+  "workers_dev": true,
+  "secrets": ["KIS_APP_KEY", "KIS_APP_SECRET"],
+  "observability": { "enabled": true }
+}

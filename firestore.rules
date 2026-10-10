@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function member(householdId) { return signedIn() && exists(/databases/$(database)/documents/households/$(householdId)/members/$(request.auth.uid)); }
+    function owner(householdId) { return signedIn() && get(/databases/$(database)/documents/households/$(householdId)).data.ownerId == request.auth.uid; }
+    function validInvite(householdId, code) { return exists(/databases/$(database)/documents/invites/$(code)) && get(/databases/$(database)/documents/invites/$(code)).data.householdId == householdId && get(/databases/$(database)/documents/invites/$(code)).data.expiresAt > request.time; }
+
+    match /profiles/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId && request.resource.data.userId == userId;
+      allow update: if signedIn() && (request.auth.uid == userId || owner(request.resource.data.activeHouseholdId));
+    }
+    match /households/{householdId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read: if member(householdId);
+      allow update: if owner(householdId);
+      match /members/{userId} {
+        allow read: if member(householdId);
+        // The first sign-in creates the household, its owner membership, and
+        // the user's profile in one atomic transaction. `getAfter` verifies
+        // that this special first membership belongs to the new household
+        // owner; later member creation remains owner-only.
+        allow create: if owner(householdId) || (signedIn() && request.auth.uid == userId && request.resource.data.role == "owner" && getAfter(/databases/$(database)/documents/households/$(householdId)).data.ownerId == request.auth.uid);
+      }
+      match /ledger/{ledgerId} { allow read, write: if member(householdId); }
+      match /requests/{userId} {
+        allow create: if signedIn() && request.auth.uid == userId && request.resource.data.requesterId == userId && request.resource.data.status == "pending" && validInvite(householdId, request.resource.data.inviteCode);
+        allow read: if request.auth.uid == userId || owner(householdId);
+        allow update: if owner(householdId);
+      }
+    }
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow create, update: if signedIn() && owner(request.resource.data.householdId);
+      allow delete: if signedIn() && owner(resource.data.householdId);
+    }
+  }
+}
