@@ -1,4 +1,5 @@
 import { inferTransactionCategory, isTransactionCategory } from "@/lib/category-master";
+import { readSafeWorkbook, type WorkbookSheet } from "@/lib/spreadsheet-reader";
 
 export type ImportedTransaction = {
   owner?: string;
@@ -56,17 +57,8 @@ const cardHeaderIndex = (rows: unknown[][]) => rows.findIndex((row) => {
     && columnIndex(columns, CARD_HEADERS.amount) >= 0;
 });
 
-type WorkbookSheet = { name: string; rows: unknown[][] };
-
 async function readWorkbook(file: File): Promise<WorkbookSheet[]> {
-  const XLSX = await import("xlsx");
-  // Keep Excel dates as serial numbers. Converting them to Date objects here can
-  // shift a midnight cell to the previous day depending on the local timezone.
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-  return workbook.SheetNames.map((name) => ({
-    name,
-    rows: XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: true, defval: "" }) as unknown[][],
-  }));
+  return readSafeWorkbook(file);
 }
 
 const likelyColumn = (columns: string[], pattern: RegExp) => columns.findIndex((column) => pattern.test(headerText(column)));

@@ -1,3 +1,5 @@
+import { readSafeWorkbook } from "@/lib/spreadsheet-reader";
+
 export type ImportedSaving = { owner:string; name:string; institution:string; balance:number; rate:number; currency:string; date:string; note:string };
 export type ImportedInvestment = { owner:string; name:string; ticker:string; market:string; currency:string; quantity:number; averagePrice:number; currentPrice:number; invested:number; date:string; note:string };
 export type ImportedLoan = { owner:string; name:string; institution:string; principal:number; rate:number; monthlyPayment:number; date:string; note:string };
@@ -15,13 +17,12 @@ const dateText = (value:unknown) => {
 };
 
 export async function parseAssetFile(file:File):Promise<ImportedAssets> {
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), { type:"array", cellDates:true });
+  const workbook = await readSafeWorkbook(file, false);
   const rows = (sheetName:string) => {
-    const sheet = workbook.Sheets[sheetName];
+    const sheet = workbook.find(item => item.name === sheetName);
     if (!sheet) return [] as Record<string,unknown>[];
-    const raw = XLSX.utils.sheet_to_json<Record<string,unknown>>(sheet, { range:3, defval:"", raw:true });
-    return raw.map(row => Object.fromEntries(Object.entries(row).map(([header,value]) => [key(header), value])));
+    const [headers = [], ...records] = sheet.rows.slice(3);
+    return records.map(record => Object.fromEntries(headers.map((header, index) => [key(header), record[index] ?? ""])));
   };
 
   const savings = rows("저축·예금").flatMap((row):ImportedSaving[] => {

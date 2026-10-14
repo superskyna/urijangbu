@@ -17,12 +17,21 @@ const ALLOWED_ORIGINS = new Set(["https://uri-jangbu.web.app", "http://localhost
 const KIS_BASE_URL = "https://openapi.koreainvestment.com:9443";
 const FIREBASE_JWKS = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const KIS_TOKEN_CACHE_KEY = "https://cache.urijangbu.app/kis-access-token";
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_KEY_BASE = "https://cache.urijangbu.app/quote-rate-limit/";
 
 let signingKeys: Record<string, JsonWebKey> = {};
 let certificatesExpireAt = 0;
 let kisAccessToken = "";
 let kisTokenExpiresAt = 0;
 let kisTokenRequest: Promise<string> | null = null;
+const localRateLimits = new Map<string, number>();
+
+class RateLimitError extends Error {
+  constructor(public readonly retryAfterSeconds: number) {
+    super("시세 갱신은 사용자당 1분에 한 번만 요청할 수 있습니다.");
+  }
+}
 
 const cors = (origin: string | null) => ({
   "Access-Control-Allow-Origin": origin && ALLOWED_ORIGINS.has(origin) ? origin : "https://uri-jangbu.web.app",
@@ -61,6 +70,29 @@ async function verifyFirebaseToken(authorization: string | null) {
   const key = await crypto.subtle.importKey("jwk", signingKey, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
   const signed = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
   if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, base64UrlBytes(encodedSignature), signed)) throw new Error("로그인 서명을 확인하지 못했습니다.");
+  return { uid: payload.sub };
+}
+
+async function enforceQuoteRateLimit(uid: string) {
+  const now = Date.now();
+  const locallyBlockedUntil = localRateLimits.get(uid) || 0;
+  if (locallyBlockedUntil > now) throw new RateLimitError(Math.ceil((locallyBlockedUntil - now) / 1000));
+
+  const key = `${RATE_LIMIT_KEY_BASE}${encodeURIComponent(uid)}`;
+  const stored = await caches.default.match(key);
+  if (stored) {
+    const retryAfter = Number(stored.headers.get("X-Retry-After") || "60");
+    throw new RateLimitError(Math.max(1, retryAfter));
+  }
+
+  const blockedUntil = now + RATE_LIMIT_WINDOW_MS;
+  localRateLimits.set(uid, blockedUntil);
+  await caches.default.put(key, new Response(null, {
+    headers: {
+      "Cache-Control": "max-age=60",
+      "X-Retry-After": "60",
+    },
+  }));
 }
 
 async function getKisAccessToken(env: Env) {
@@ -160,7 +192,8 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors(origin) });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/quotes") return json({ message: "찾을 수 없는 요청입니다." }, 404, origin);
     try {
-      await verifyFirebaseToken(request.headers.get("Authorization"));
+      const user = await verifyFirebaseToken(request.headers.get("Authorization"));
+      await enforceQuoteRateLimit(user.uid);
       const body = await request.json() as { symbols?: unknown };
       const symbols = [...new Set((Array.isArray(body.symbols) ? body.symbols : []).filter((symbol): symbol is string => typeof symbol === "string").map(symbol => symbol.trim().toUpperCase()))].filter(symbol => /^[0-9A-Z]{6}$/.test(symbol)).slice(0, 30);
       if (!symbols.length) return json({ message: "6자리 영문·숫자 국내 종목코드를 입력해주세요." }, 400, origin);
@@ -175,8 +208,8 @@ export default {
       return json({ quotes, missing: symbols.filter(ticker => !found.has(ticker)) }, 200, origin);
     } catch (error) {
       const message = error instanceof Error ? error.message : "시세를 불러오지 못했습니다.";
-      const status = message.includes("로그인") ? 401 : 502;
-      return json({ message }, status, origin);
+      const status = error instanceof RateLimitError ? 429 : message.includes("로그인") ? 401 : 502;
+      return json({ message, ...(error instanceof RateLimitError ? { retryAfter: error.retryAfterSeconds } : {}) }, status, origin);
     }
   },
 };

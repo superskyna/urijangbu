@@ -1,8 +1,8 @@
 {
   "name": "urijangbu-market-api",
+  "account_id": "6993801a682eb0863b434fff422d6783",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-09",
   "workers_dev": true,
-  "secrets": ["KIS_APP_KEY", "KIS_APP_SECRET"],
   "observability": { "enabled": true }
 }
