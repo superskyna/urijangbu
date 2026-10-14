@@ -83,7 +83,20 @@ export async function firebaseReadLedger(user: User) {
 
 export async function firebaseWriteLedger(user: User, data: unknown) {
   const householdId = await activeHouseholdId(user);
-  await setDoc(ledgerRef(householdId), { data, updatedAt: serverTimestamp(), updatedBy: user.uid }, { merge: true });
+  await setDoc(ledgerRef(householdId), { data: removeUndefined(data), updatedAt: serverTimestamp(), updatedBy: user.uid }, { merge: true });
+}
+
+/** Firestore does not accept undefined values anywhere in a document. */
+function removeUndefined<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(item => removeUndefined(item)) as T;
+  if (value && typeof value === "object" && !(value instanceof Timestamp) && !(value instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) =>
+        nested === undefined ? [] : [[key, removeUndefined(nested)]],
+      ),
+    ) as T;
+  }
+  return value;
 }
 
 export function firebaseAccount(user: User) { return account(user); }
